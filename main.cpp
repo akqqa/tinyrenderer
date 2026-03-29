@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <map>
 #include "tgaimage.h"
 #include "vertex.cpp"
 #include "face.cpp"
@@ -17,8 +18,9 @@ constexpr TGAColor yellow  = {  0, 200, 255, 255};
 constexpr int width  = 1000;
 constexpr int height = 1000;
 
-vector<tuple<int,int>> line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
-    vector<tuple<int,int>> lineCoords;
+// Returns a map of y: x coordinates that make up the line
+map<int,int> line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
+    map<int,int> lineCoords;
     // own attempt at steepness resolving
     bool transposed = false;
     if (abs(ay - by) > abs(ax - bx)) { // if more y changes than x
@@ -35,10 +37,10 @@ vector<tuple<int,int>> line(int ax, int ay, int bx, int by, TGAImage &framebuffe
         int y = round( ay + (by-ay)*t );
         if (transposed) {
             framebuffer.set(y, x, color);
-            lineCoords.push_back(make_tuple(y,x));
+            lineCoords[x] = y;
         } else {
             framebuffer.set(x, y, color);
-            lineCoords.push_back(make_tuple(x,y));
+            lineCoords[y] = x;
         }
     }
 
@@ -49,25 +51,18 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuf
     if (ay>by) { swap(ax, bx); swap(ay, by); }
     if (ay>cy) { swap(ax, cx); swap(ay, cy); }
     if (by>cy) { swap(bx, cx); swap(by, cy); }
-    vector<tuple<int,int>> abCoords = line(ax, ay, bx, by, framebuffer, color);
-    vector<tuple<int,int>> bcCoords = line(bx, by, cx, cy, framebuffer, color);
-    vector<tuple<int,int>> acCoords = line(ax, ay, cx, cy, framebuffer, color);
+    map<int,int> abCoords = line(ax, ay, bx, by, framebuffer, color);
+    map<int,int> bcCoords = line(bx, by, cx, cy, framebuffer, color);
+    map<int,int> acCoords = line(ax, ay, cx, cy, framebuffer, color);
 
-    // Figure out triangle filling
-    // WE HAVE OTDER SO A IS HIGHEST AND C IS LOWEST
-    // draw lines between each segment of acCoords and aBCoords, then acCoords and bcCoords
-    // NOT CORRECT AS AC != AB + BC HEIGHT WISE, NEED TO SOMEHOW SCAN DOWN THE Y OF AC AND MATCH WITH CORRECT PLACES IN AB AND BC
-    for (size_t i = 0; i < acCoords.size(); i++) {
-        line(get<0>(acCoords[i]), get<1>(acCoords[i]), get<0>(abCoords[i]), get<1>(abCoords[i]), framebuffer, color);
+    // scan down every y value and make lines using maps to get the x value for each line at that y
+    for (int i = ay; i <= cy; i++) {
+        if (i <= by) {
+            line(acCoords[i], i, abCoords[i], i, framebuffer, color);
+        } else {
+            line(acCoords[i], i, bcCoords[i], i, framebuffer, color);
+        }
     }
-    for (size_t i = 0; i < bcCoords.size(); i++) {
-        line(get<0>(bcCoords[i]), get<1>(bcCoords[i]), get<0>(abCoords[i+acCoords.size()]), get<1>(abCoords[i+acCoords.size()]), framebuffer, color);
-    }
-
-    cout << "ac: " << acCoords.size() << endl;
-    cout << "ab+bc: " << abCoords.size() + bcCoords.size() << endl;
-    cout << "done" << endl;
-
 }
 
 vector<string> splitString(string s, string delimiter) {
@@ -95,9 +90,7 @@ vector<Vertex> readVertices(string filename) {
     if (file.is_open()) {
         while (getline(file, line)) {
             if (line.substr(0,2) == "v ") {
-                cout << "vertex" << endl;
                 vector<string> lineData = splitString(line, " ");
-                cout << lineData[1] << " " << lineData[2] << " " << lineData[3] << endl;
                 res.push_back(Vertex(stof(lineData[1]),stof(lineData[2]),stof(lineData[3])));
             }
         }
@@ -119,14 +112,10 @@ vector<Face> readFaces(string filename) {
     if (file.is_open()) {
         while (getline(file, line)) {
             if (line.substr(0,2) == "f ") {
-                cout << ++count << endl;
-                cout << "face" << endl;
                 vector<string> lineData = splitString(line, " ");
-                cout << lineData[1] << endl;
                 string f1 = splitString(lineData[1], "/")[0];
                 string f2 = splitString(lineData[2], "/")[0];
                 string f3 = splitString(lineData[3], "/")[0];
-                cout << f1 << " " << f2 << " " << f3 << endl;
                 res.push_back(Face(stoi(f1)-1,stoi(f2)-1,stoi(f3)-1));
             }
         }
@@ -147,29 +136,31 @@ void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer) 
         auto [ax, ay] = project(vertices[f.v1]);
         auto [bx, by] = project(vertices[f.v2]);
         auto [cx, cy] = project(vertices[f.v3]);
-        triangle(ax, ay, bx, by, cx, cy, framebuffer, red);
+        TGAColor rnd;
+        for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+        triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
     }
-    for (Vertex v : vertices) {
-        auto [ax, ay] = project(v);
-        framebuffer.set(ax, ay, white);
-    }
+    // for (Vertex v : vertices) {
+    //     auto [ax, ay] = project(v);
+    //     framebuffer.set(ax, ay, white);
+    // }
 }
 
 int main(int argc, char** argv) {
-    // TGAImage framebuffer(width, height, TGAImage::RGB);
-
-    // vector<Vertex> vertices = readVertices("../obj/african_head/african_head.obj");
-    // vector<Face> faces = readFaces("../obj/african_head/african_head.obj");
-
-    // render(vertices, faces, framebuffer);
-
-    // framebuffer.write_tga_file("framebuffer.tga");
-
     TGAImage framebuffer(width, height, TGAImage::RGB);
-    triangle(  7, 45, 35, 100, 45,  60, framebuffer, red);
-    triangle(120, 35, 90,   5, 45, 110, framebuffer, white);
-    triangle(115, 83, 80,  90, 85, 120, framebuffer, green);
+
+    vector<Vertex> vertices = readVertices("../obj/african_head/african_head.obj");
+    vector<Face> faces = readFaces("../obj/african_head/african_head.obj");
+
+    render(vertices, faces, framebuffer);
+
     framebuffer.write_tga_file("framebuffer.tga");
+
+    // TGAImage framebuffer(width, height, TGAImage::RGB);
+    // triangle(  7, 45, 35, 100, 45,  60, framebuffer, red);
+    // triangle(120, 35, 90,   5, 45, 110, framebuffer, white);
+    // triangle(115, 83, 80,  90, 85, 120, framebuffer, green);
+    // framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
 
