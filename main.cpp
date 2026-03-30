@@ -81,7 +81,14 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuf
             if (alpha < 0 || beta < 0 || gamma < 0) {
                 continue;
             }
-            framebuffer.set(i, j, color);
+            if (alpha > 0.1 && beta > 0.1 && gamma > 0.1) { // if all barycentric parameters are above 0.1, it must be within the middle, so discard
+                continue;
+            }
+            cout << alpha << endl;
+            cout << beta << endl;
+            cout << gamma << endl;
+            framebuffer.set(i, j, {alpha*255,beta*255,gamma*255});
+            
         }
     }
 }
@@ -179,9 +186,13 @@ int main(int argc, char** argv) {
     framebuffer.write_tga_file("framebuffer.tga");
 
     // TGAImage framebuffer(width, height, TGAImage::RGB);
-    // triangle(  7, 45, 35, 100, 45,  60, framebuffer, red);
-    // triangle(120, 35, 90,   5, 45, 110, framebuffer, white);
-    // triangle(115, 83, 80,  90, 85, 120, framebuffer, green);
+
+    // int ax = 17, ay =  4, az =  255;
+    // int bx = 55, by = 39, bz = 128;
+    // int cx = 23, cy = 59, cz = 13;
+
+    // triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, red);
+
     // framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
