@@ -19,8 +19,7 @@ constexpr int width  = 1000;
 constexpr int height = 1000;
 
 // Returns a map of y: x coordinates that make up the line
-map<int,int> line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
-    map<int,int> lineCoords;
+void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
     // own attempt at steepness resolving
     bool transposed = false;
     if (abs(ay - by) > abs(ax - bx)) { // if more y changes than x
@@ -37,30 +36,52 @@ map<int,int> line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColo
         int y = round( ay + (by-ay)*t );
         if (transposed) {
             framebuffer.set(y, x, color);
-            lineCoords[x] = y;
         } else {
             framebuffer.set(x, y, color);
-            lineCoords[y] = x;
         }
     }
-
-    return lineCoords;
 }
 
-void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    if (ay>by) { swap(ax, bx); swap(ay, by); }
-    if (ay>cy) { swap(ax, cx); swap(ay, cy); }
-    if (by>cy) { swap(bx, cx); swap(by, cy); }
-    map<int,int> abCoords = line(ax, ay, bx, by, framebuffer, color);
-    map<int,int> bcCoords = line(bx, by, cx, cy, framebuffer, color);
-    map<int,int> acCoords = line(ax, ay, cx, cy, framebuffer, color);
+// void scanlineTriangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+//     if (ay>by) { swap(ax, bx); swap(ay, by); }
+//     if (ay>cy) { swap(ax, cx); swap(ay, cy); }
+//     if (by>cy) { swap(bx, cx); swap(by, cy); }
+//     map<int,int> abCoords = line(ax, ay, bx, by, framebuffer, color);
+//     map<int,int> bcCoords = line(bx, by, cx, cy, framebuffer, color);
+//     map<int,int> acCoords = line(ax, ay, cx, cy, framebuffer, color);
 
-    // scan down every y value and make lines using maps to get the x value for each line at that y
-    for (int i = ay; i <= cy; i++) {
-        if (i <= by) {
-            line(acCoords[i], i, abCoords[i], i, framebuffer, color);
-        } else {
-            line(acCoords[i], i, bcCoords[i], i, framebuffer, color);
+//     // scan down every y value and make lines using maps to get the x value for each line at that y
+//     for (int i = ay; i <= cy; i++) {
+//         if (i <= by) {
+//             line(acCoords[i], i, abCoords[i], i, framebuffer, color);
+//         } else {
+//             line(acCoords[i], i, bcCoords[i], i, framebuffer, color);
+//         }
+//     }
+// }
+
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    // Get bounding box
+    // loop thru pixels, check if in triangle, if so fill
+    int bbMinX = std::min(std::min(ax, bx), cx);
+    int bbMinY = std::min(std::min(ay, by), cy);
+    int bbMaxX = std::max(std::max(ax, bx), cx);
+    int bbMaxY = std::max(std::max(ay, by), cy);
+    float abcArea = (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))/2;
+    if (abcArea<1) return;
+
+    for (int i = bbMinX; i <= bbMaxX; i++) {
+        for (int j = bbMinY; j <= bbMaxY; j++) {
+            float abpArea = (ax*(by-j) + bx*(j-ay) + i*(ay-by))/2;
+            float apcArea = (ax*(j-cy) + i*(cy-ay) + cx*(ay-j))/2;
+            float pbcArea = (i*(by-cy) + bx*(cy-j) + cx*(j-by))/2;
+            float alpha = abpArea / abcArea;
+            float beta  = apcArea / abcArea;
+            float gamma = pbcArea / abcArea;
+            if (alpha < 0 || beta < 0 || gamma < 0) {
+                continue;
+            }
+            framebuffer.set(i, j, color);
         }
     }
 }
@@ -132,6 +153,7 @@ tuple<int,int> project(Vertex v) {
 }
 
 void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer) {
+#pragma omp parallel for
     for (Face f : faces) {
         auto [ax, ay] = project(vertices[f.v1]);
         auto [bx, by] = project(vertices[f.v2]);
@@ -149,8 +171,8 @@ void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer) 
 int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB);
 
-    vector<Vertex> vertices = readVertices("../obj/african_head/african_head.obj");
-    vector<Face> faces = readFaces("../obj/african_head/african_head.obj");
+    vector<Vertex> vertices = readVertices("../obj/diablo3_pose/diablo3_pose.obj");
+    vector<Face> faces = readFaces("../obj/diablo3_pose/diablo3_pose.obj");
 
     render(vertices, faces, framebuffer);
 
