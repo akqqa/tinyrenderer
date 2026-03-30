@@ -60,38 +60,6 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
 //     }
 // }
 
-void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // Get bounding box
-    // loop thru pixels, check if in triangle, if so fill
-    int bbMinX = std::min(std::min(ax, bx), cx);
-    int bbMinY = std::min(std::min(ay, by), cy);
-    int bbMaxX = std::max(std::max(ax, bx), cx);
-    int bbMaxY = std::max(std::max(ay, by), cy);
-    float abcArea = (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))/2;
-    if (abcArea<1) return;
-
-    for (int i = bbMinX; i <= bbMaxX; i++) {
-        for (int j = bbMinY; j <= bbMaxY; j++) {
-            float abpArea = (ax*(by-j) + bx*(j-ay) + i*(ay-by))/2;
-            float apcArea = (ax*(j-cy) + i*(cy-ay) + cx*(ay-j))/2;
-            float pbcArea = (i*(by-cy) + bx*(cy-j) + cx*(j-by))/2;
-            float alpha = abpArea / abcArea;
-            float beta  = apcArea / abcArea;
-            float gamma = pbcArea / abcArea;
-            if (alpha < 0 || beta < 0 || gamma < 0) {
-                continue;
-            }
-            if (alpha > 0.1 && beta > 0.1 && gamma > 0.1) { // if all barycentric parameters are above 0.1, it must be within the middle, so discard
-                continue;
-            }
-            cout << alpha << endl;
-            cout << beta << endl;
-            cout << gamma << endl;
-            framebuffer.set(i, j, {alpha*255,beta*255,gamma*255});
-            
-        }
-    }
-}
 
 vector<string> splitString(string s, string delimiter) {
     // https://stackoverflow.com/a/46931770
@@ -155,19 +123,59 @@ vector<Face> readFaces(string filename) {
     return res;
 }
 
-tuple<int,int> project(Vertex v) {
-    return { (v.x + 1.0) *  width/2, (v.y + 1.0) * height/2 };
+tuple<int,int,int> project(Vertex v) {
+    return { (v.x + 1.0) *  width/2, (v.y + 1.0) * height/2, (v.z + 1.0) *   255.0/2 };
 }
 
-void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer) {
+double signedTriangleArea(int ax, int ay, int bx, int by, int cx, int cy) {
+    return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
+}
+
+void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage &framebuffer, TGAImage &zbuffer, TGAColor color) {
+    // Get bounding box
+    // loop thru pixels, check if in triangle, if so fill
+    int bbMinX = std::min(std::min(ax, bx), cx);
+    int bbMinY = std::min(std::min(ay, by), cy);
+    int bbMaxX = std::max(std::max(ax, bx), cx);
+    int bbMaxY = std::max(std::max(ay, by), cy);
+    float totalArea = signedTriangleArea(ax, ay, bx, by, cx, cy);
+    if (totalArea<1) return;
+
+    for (int i = bbMinX; i <= bbMaxX; i++) {
+        for (int j = bbMinY; j <= bbMaxY; j++) {
+            // float abpArea = (ax*(by-j) + bx*(j-ay) + i*(ay-by))/2;
+            // float apcArea = (ax*(j-cy) + i*(cy-ay) + cx*(ay-j))/2;
+            // float pbcArea = (i*(by-cy) + bx*(cy-j) + cx*(j-by))/2;
+            float alpha = signedTriangleArea(i, j, bx, by, cx, cy) / totalArea;
+            float beta  = signedTriangleArea(i, j, cx, cy, ax, ay) / totalArea;
+            float gamma = signedTriangleArea(i, j, ax, ay, bx, by) / totalArea;
+            if (alpha < 0 || beta < 0 || gamma < 0) {
+                continue;
+            }
+            // if (alpha > 0.1 && beta > 0.1 && gamma > 0.1) { // if all barycentric parameters are above 0.1, it must be within the middle, so discard
+            //     continue;
+            // }
+
+            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz); // computes the depth of that pixel by weighting the depth of points a b and c
+            if (z <= zbuffer.get(i,j)[0]) continue;
+            zbuffer.set(i, j, {z});
+            framebuffer.set(i, j, color); //{alpha*255,beta*255,gamma*255});
+        
+            
+            
+        }
+    }
+}
+
+void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer, TGAImage& zbuffer) {
 #pragma omp parallel for
     for (Face f : faces) {
-        auto [ax, ay] = project(vertices[f.v1]);
-        auto [bx, by] = project(vertices[f.v2]);
-        auto [cx, cy] = project(vertices[f.v3]);
+        auto [ax, ay, az] = project(vertices[f.v1]);
+        auto [bx, by, bz] = project(vertices[f.v2]);
+        auto [cx, cy, cz] = project(vertices[f.v3]);
         TGAColor rnd;
         for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-        triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
+        triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, zbuffer, rnd);
     }
     // for (Vertex v : vertices) {
     //     auto [ax, ay] = project(v);
@@ -177,13 +185,15 @@ void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer) 
 
 int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB);
+    TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
 
     vector<Vertex> vertices = readVertices("../obj/diablo3_pose/diablo3_pose.obj");
     vector<Face> faces = readFaces("../obj/diablo3_pose/diablo3_pose.obj");
 
-    render(vertices, faces, framebuffer);
+    render(vertices, faces, framebuffer, zbuffer);
 
     framebuffer.write_tga_file("framebuffer.tga");
+    zbuffer.write_tga_file("zbuffer.tga");
 
     // TGAImage framebuffer(width, height, TGAImage::RGB);
 
