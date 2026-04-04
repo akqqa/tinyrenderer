@@ -43,25 +43,6 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
-// void scanlineTriangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-//     if (ay>by) { swap(ax, bx); swap(ay, by); }
-//     if (ay>cy) { swap(ax, cx); swap(ay, cy); }
-//     if (by>cy) { swap(bx, cx); swap(by, cy); }
-//     map<int,int> abCoords = line(ax, ay, bx, by, framebuffer, color);
-//     map<int,int> bcCoords = line(bx, by, cx, cy, framebuffer, color);
-//     map<int,int> acCoords = line(ax, ay, cx, cy, framebuffer, color);
-
-//     // scan down every y value and make lines using maps to get the x value for each line at that y
-//     for (int i = ay; i <= cy; i++) {
-//         if (i <= by) {
-//             line(acCoords[i], i, abCoords[i], i, framebuffer, color);
-//         } else {
-//             line(acCoords[i], i, bcCoords[i], i, framebuffer, color);
-//         }
-//     }
-// }
-
-
 vector<string> splitString(string s, string delimiter) {
     // https://stackoverflow.com/a/46931770
     size_t pos_start = 0, pos_end, delim_len = delimiter.length();
@@ -77,52 +58,6 @@ vector<string> splitString(string s, string delimiter) {
     res.push_back(s.substr(pos_start));
     return res;
 }
-
-// // Read in vertices from file into a vector of objects
-// vector<Vertex> readVertices(string filename) {
-//     ifstream file(filename);
-//     string line;
-//     vector<Vertex> res;
-
-//     if (file.is_open()) {
-//         while (getline(file, line)) {
-//             if (line.substr(0,2) == "v ") {
-//                 vector<string> lineData = splitString(line, " ");
-//                 res.push_back(Vertex(stof(lineData[1]),stof(lineData[2]),stof(lineData[3])));
-//             }
-//         }
-//         file.close();
-//     } else {
-//         cerr << "unable to open file" << endl;
-//     }
-
-//     return res;
-// }
-
-// // Read in faces from file into a vector of objects
-// vector<vec3> readFaces(string filename) {
-//     ifstream file(filename);
-//     string line;
-//     vector<Face> res;
-//     int count = 0;
-
-//     if (file.is_open()) {
-//         while (getline(file, line)) {
-//             if (line.substr(0,2) == "f ") {
-//                 vector<string> lineData = splitString(line, " ");
-//                 string f1 = splitString(lineData[1], "/")[0];
-//                 string f2 = splitString(lineData[2], "/")[0];
-//                 string f3 = splitString(lineData[3], "/")[0];
-//                 res.push_back(Face(stoi(f1)-1,stoi(f2)-1,stoi(f3)-1));
-//             }
-//         }
-//         file.close();
-//     } else {
-//         cerr << "unable to open file" << endl;
-//     }
-
-//     return res;
-// }
 
 Model readModel(string filename) {
     ifstream file(filename);
@@ -151,21 +86,30 @@ Model readModel(string filename) {
     return Model(vertices, faces);
 }
 
-vec3 project(vec3 v) {
-    return { (v.x + 1.0) *  width/2, (v.y + 1.0) * height/2, (v.z + 1.0) *   255.0/2 };
+std::tuple<int,int,double> project(vec3 v) {
+    return { (v.x + 1.0) *  width/2, (v.y + 1.0) * height/2, v.z };
 }
 
 vec3 rotate(vec3 v) {
-    constexpr double a = M_PI/6;
-    constexpr mat<3,3> Ry = {{{std::cos(a), 0, std::sin(a)}, {0,1,0}, {-std::sin(a), 0, std::cos(a)}}};
+    constexpr double angle = M_PI/6; // Angle to rotate
+    constexpr mat<3,3> Ry = {{{std::cos(angle), 0, std::sin(angle)}, {0,1,0}, {-std::sin(angle), 0, std::cos(angle)}}}; // Rotation matrix around y axis
     return Ry*v;
 }
+
+vec3 perspective(vec3 v) {
+    // We project from a camera at (0, 0, c) where c is the depth from z=0 onto a screen plane at z=0.
+    // Note this means any +ve z are in front of the screen (so appear bigger), and any -ve z are behind the screen (so appear smaller)
+    // To find x' and y' for this projection, we use the incercept theorem that states the ratios of x' to c == x to (c-z)
+    double c = 3.;
+    return v*(1/(1-(v.z/c)));
+}
+
 
 double signedTriangleArea(int ax, int ay, int bx, int by, int cx, int cy) {
     return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
 }
 
-void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage &framebuffer, TGAImage &zbuffer, TGAColor color) {
+void triangle(int ax, int ay, double az, int bx, int by, double bz, int cx, int cy, double cz, TGAImage &framebuffer, vector<double> &zbuffer, TGAColor color) {
     // Get bounding box
     // loop thru pixels, check if in triangle, if so fill
     int bbMinX = std::min(std::min(ax, bx), cx);
@@ -187,32 +131,25 @@ void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, in
             if (alpha < 0 || beta < 0 || gamma < 0) {
                 continue;
             }
-            // if (alpha > 0.1 && beta > 0.1 && gamma > 0.1) { // if all barycentric parameters are above 0.1, it must be within the middle, so discard
-            //     continue;
-            // }
 
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz); // computes the depth of that pixel by weighting the depth of points a b and c
-            if (z <= zbuffer.get(i,j)[0]) continue;
-            zbuffer.set(i, j, {z});
+            double z = (alpha * az + beta * bz + gamma * cz); // computes the depth of that pixel by weighting the depth of points a b and c
+            if (z <= zbuffer[i + j*width]) continue;
+            zbuffer[i + j*width] = z;
             framebuffer.set(i, j, color); //{alpha*255,beta*255,gamma*255});
         }
     }
 }
 
-void render(Model model, TGAImage& framebuffer, TGAImage& zbuffer) {
+void render(Model model, TGAImage& framebuffer, vector<double> &zbuffer) {
 #pragma omp parallel for
     for (vec3 f : model.faces) {
-        auto [ax, ay, az] = project(model.vertex(f[0]));
-        auto [bx, by, bz] = project(model.vertex(f[1]));
-        auto [cx, cy, cz] = project(model.vertex(f[2]));
+        auto [ax, ay, az] = project(perspective(rotate(model.vertex(f[0]))));
+        auto [bx, by, bz] = project(perspective(rotate(model.vertex(f[1]))));
+        auto [cx, cy, cz] = project(perspective(rotate(model.vertex(f[2]))));
         TGAColor rnd;
         for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
         triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, zbuffer, rnd);
     }
-    // for (Vertex v : vertices) {
-    //     auto [ax, ay] = project(v);
-    //     framebuffer.set(ax, ay, white);
-    // }
 }
 
 int main(int argc, char** argv) {
@@ -222,24 +159,41 @@ int main(int argc, char** argv) {
     }
 
     TGAImage framebuffer(width, height, TGAImage::RGB);
-    TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+    vector<double> zbuffer(width*height, -std::numeric_limits<double>::max());
+    TGAImage zbufferImage(width, height, TGAImage::GRAYSCALE);
 
     Model model = readModel(argv[1]);
 
     render(model, framebuffer, zbuffer);
 
     framebuffer.write_tga_file("framebuffer.tga");
-    zbuffer.write_tga_file("zbuffer.tga");
 
-    // TGAImage framebuffer(width, height, TGAImage::RGB);
+    double minZ = std::numeric_limits<double>::max();
+    double maxZ = -std::numeric_limits<double>::max();
 
-    // int ax = 17, ay =  4, az =  255;
-    // int bx = 55, by = 39, bz = 128;
-    // int cx = 23, cy = 59, cz = 13;
+    for (double z : zbuffer) {
+        if (z == -std::numeric_limits<double>::max()) continue; // skip untouched pixels
+        minZ = std::min(minZ, z);
+        maxZ = std::max(maxZ, z);
+    }
+    for (int x=0; x<width; x++) {
+        for (int y=0; y<height; y++) {
+            double z = zbuffer[x + y*width];
 
-    // triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, red);
+            if (z == -std::numeric_limits<double>::max()) {
+                zbufferImage.set(x, y, TGAColor{0,0,0,255});
+                continue;
+            }
 
-    // framebuffer.write_tga_file("framebuffer.tga");
+            double normalized = (z - minZ) / (maxZ - minZ); // 0 -> 1
+            int value = static_cast<int>(normalized * 255);
+
+            zbufferImage.set(x, y, TGAColor{value, value, value, 255});
+        }
+    }
+
+    zbufferImage.write_tga_file("zbuffer.tga");
+
     return 0;
 }
 
