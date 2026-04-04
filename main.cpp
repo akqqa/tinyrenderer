@@ -3,9 +3,10 @@
 #include <iostream>
 #include <string>
 #include <map>
+#include <vector>
 #include "tgaimage.h"
-#include "vertex.cpp"
-#include "face.cpp"
+#include "geometry.h"
+#include "model.cpp"
 
 using namespace std;
 
@@ -15,8 +16,8 @@ constexpr TGAColor red     = {  0,   0, 255, 255};
 constexpr TGAColor blue    = {255, 128,  64, 255};
 constexpr TGAColor yellow  = {  0, 200, 255, 255};
 
-constexpr int width  = 1000;
-constexpr int height = 1000;
+constexpr int width  = 2000;
+constexpr int height = 2000;
 
 // Returns a map of y: x coordinates that make up the line
 void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
@@ -77,42 +78,69 @@ vector<string> splitString(string s, string delimiter) {
     return res;
 }
 
-// Read in vertices from file into a vector of objects
-vector<Vertex> readVertices(string filename) {
+// // Read in vertices from file into a vector of objects
+// vector<Vertex> readVertices(string filename) {
+//     ifstream file(filename);
+//     string line;
+//     vector<Vertex> res;
+
+//     if (file.is_open()) {
+//         while (getline(file, line)) {
+//             if (line.substr(0,2) == "v ") {
+//                 vector<string> lineData = splitString(line, " ");
+//                 res.push_back(Vertex(stof(lineData[1]),stof(lineData[2]),stof(lineData[3])));
+//             }
+//         }
+//         file.close();
+//     } else {
+//         cerr << "unable to open file" << endl;
+//     }
+
+//     return res;
+// }
+
+// // Read in faces from file into a vector of objects
+// vector<vec3> readFaces(string filename) {
+//     ifstream file(filename);
+//     string line;
+//     vector<Face> res;
+//     int count = 0;
+
+//     if (file.is_open()) {
+//         while (getline(file, line)) {
+//             if (line.substr(0,2) == "f ") {
+//                 vector<string> lineData = splitString(line, " ");
+//                 string f1 = splitString(lineData[1], "/")[0];
+//                 string f2 = splitString(lineData[2], "/")[0];
+//                 string f3 = splitString(lineData[3], "/")[0];
+//                 res.push_back(Face(stoi(f1)-1,stoi(f2)-1,stoi(f3)-1));
+//             }
+//         }
+//         file.close();
+//     } else {
+//         cerr << "unable to open file" << endl;
+//     }
+
+//     return res;
+// }
+
+Model readModel(string filename) {
     ifstream file(filename);
     string line;
-    vector<Vertex> res;
+    vector<vec3> vertices;
+    vector<vec3> faces;
 
     if (file.is_open()) {
         while (getline(file, line)) {
             if (line.substr(0,2) == "v ") {
                 vector<string> lineData = splitString(line, " ");
-                res.push_back(Vertex(stof(lineData[1]),stof(lineData[2]),stof(lineData[3])));
-            }
-        }
-        file.close();
-    } else {
-        cerr << "unable to open file" << endl;
-    }
-
-    return res;
-}
-
-// Read in faces from file into a vector of objects
-vector<Face> readFaces(string filename) {
-    ifstream file(filename);
-    string line;
-    vector<Face> res;
-    int count = 0;
-
-    if (file.is_open()) {
-        while (getline(file, line)) {
-            if (line.substr(0,2) == "f ") {
+                vertices.push_back(vec3(stof(lineData[1]),stof(lineData[2]),stof(lineData[3])));
+            } else if (line.substr(0,2) == "f ") {
                 vector<string> lineData = splitString(line, " ");
                 string f1 = splitString(lineData[1], "/")[0];
                 string f2 = splitString(lineData[2], "/")[0];
                 string f3 = splitString(lineData[3], "/")[0];
-                res.push_back(Face(stoi(f1)-1,stoi(f2)-1,stoi(f3)-1));
+                faces.push_back(vec3(stoi(f1)-1,stoi(f2)-1,stoi(f3)-1));
             }
         }
         file.close();
@@ -120,11 +148,17 @@ vector<Face> readFaces(string filename) {
         cerr << "unable to open file" << endl;
     }
 
-    return res;
+    return Model(vertices, faces);
 }
 
-tuple<int,int,int> project(Vertex v) {
+vec3 project(vec3 v) {
     return { (v.x + 1.0) *  width/2, (v.y + 1.0) * height/2, (v.z + 1.0) *   255.0/2 };
+}
+
+vec3 rotate(vec3 v) {
+    constexpr double a = M_PI/6;
+    constexpr mat<3,3> Ry = {{{std::cos(a), 0, std::sin(a)}, {0,1,0}, {-std::sin(a), 0, std::cos(a)}}};
+    return Ry*v;
 }
 
 double signedTriangleArea(int ax, int ay, int bx, int by, int cx, int cy) {
@@ -143,6 +177,7 @@ void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, in
 
     for (int i = bbMinX; i <= bbMaxX; i++) {
         for (int j = bbMinY; j <= bbMaxY; j++) {
+            // My area calculations were flawed and caused some artifacting. still unsure the exact cause
             // float abpArea = (ax*(by-j) + bx*(j-ay) + i*(ay-by))/2;
             // float apcArea = (ax*(j-cy) + i*(cy-ay) + cx*(ay-j))/2;
             // float pbcArea = (i*(by-cy) + bx*(cy-j) + cx*(j-by))/2;
@@ -160,19 +195,16 @@ void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, in
             if (z <= zbuffer.get(i,j)[0]) continue;
             zbuffer.set(i, j, {z});
             framebuffer.set(i, j, color); //{alpha*255,beta*255,gamma*255});
-        
-            
-            
         }
     }
 }
 
-void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer, TGAImage& zbuffer) {
+void render(Model model, TGAImage& framebuffer, TGAImage& zbuffer) {
 #pragma omp parallel for
-    for (Face f : faces) {
-        auto [ax, ay, az] = project(vertices[f.v1]);
-        auto [bx, by, bz] = project(vertices[f.v2]);
-        auto [cx, cy, cz] = project(vertices[f.v3]);
+    for (vec3 f : model.faces) {
+        auto [ax, ay, az] = project(model.vertex(f[0]));
+        auto [bx, by, bz] = project(model.vertex(f[1]));
+        auto [cx, cy, cz] = project(model.vertex(f[2]));
         TGAColor rnd;
         for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
         triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, zbuffer, rnd);
@@ -184,13 +216,17 @@ void render(vector<Vertex> vertices, vector<Face> faces, TGAImage& framebuffer, 
 }
 
 int main(int argc, char** argv) {
+    if (argc != 2) {
+        cerr << "Usage: " << argv[0] << " path/to/model.obj" << endl;
+        return 1;
+    }
+
     TGAImage framebuffer(width, height, TGAImage::RGB);
     TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
 
-    vector<Vertex> vertices = readVertices("../obj/diablo3_pose/diablo3_pose.obj");
-    vector<Face> faces = readFaces("../obj/diablo3_pose/diablo3_pose.obj");
+    Model model = readModel(argv[1]);
 
-    render(vertices, faces, framebuffer, zbuffer);
+    render(model, framebuffer, zbuffer);
 
     framebuffer.write_tga_file("framebuffer.tga");
     zbuffer.write_tga_file("zbuffer.tga");
